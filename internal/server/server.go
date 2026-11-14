@@ -16,6 +16,7 @@ import (
 	"termux-mcp/internal/audit"
 	"termux-mcp/internal/auth"
 	"termux-mcp/internal/config"
+	"termux-mcp/internal/oauth"
 	"termux-mcp/internal/registry"
 	"termux-mcp/internal/tasks"
 	"termux-mcp/internal/version"
@@ -66,6 +67,11 @@ func RunStdio(s *mcpgo.MCPServer) error {
 func RunHTTP(s *mcpgo.MCPServer, cfg *config.Config, mgr *tasks.Manager) error {
 	mcpHandler := mcpgo.NewStreamableHTTPServer(s)
 
+	var oauthSrv *oauth.Server
+	if cfg.Auth.OAuth {
+		oauthSrv = oauth.New(cfg.Auth.PublicBase)
+	}
+
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", mcpHandler)
 	mux.Handle("/terminal/stream", TerminalStreamHandler(mgr, mgr.Dir()))
@@ -76,15 +82,24 @@ func RunHTTP(s *mcpgo.MCPServer, cfg *config.Config, mgr *tasks.Manager) error {
 			"name":           version.Name,
 			"version":        version.Version,
 			"uptime_seconds": int64(time.Since(started).Seconds()),
+			"oauth":          cfg.Auth.OAuth,
 		})
 	})
+	if oauthSrv != nil {
+		oauthSrv.Mount(mux)
+		slog.Info("oauth 2.1 enabled", "endpoints", "/.well-known/oauth-*, /oauth/*")
+	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 	})
 
 	var h http.Handler = mux
 	h = withMaxBody(h, cfg.Server.MaxBodyBytes)
-	h = auth.RequireBearer(h, cfg.Auth.Token, cfg.Auth.Require)
+	var oauthValidator auth.TokenValidator
+	if oauthSrv != nil {
+		oauthValidator = oauthSrv
+	}
+	h = auth.RequireBearer(h, cfg.Auth.Token, cfg.Auth.Require, oauthValidator)
 	h = withLogging(h)
 
 	srv := &http.Server{
