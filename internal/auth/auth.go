@@ -36,11 +36,11 @@ func extractBearer(headerValue string) string {
 
 // RequireBearer wraps next so that requests must carry a valid bearer token.
 // Loopback connections (127.0.0.1/::1 — on-device clients and local proxies)
-// are exempt unless require is true. If token is empty, require is false, and
-// oauth is nil, all requests pass through.
+// are exempt unless require is true or OAuth is enabled.
 //
 // When oauth is non-nil, its access tokens are accepted in addition to the
-// static config token.
+// static config token, and protected paths always require a credential
+// (tunnel traffic is loopback, so exemption would leave the device open).
 func RequireBearer(next http.Handler, token string, require bool, oauth TokenValidator) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// OAuth discovery and token endpoints must remain public.
@@ -50,14 +50,10 @@ func RequireBearer(next http.Handler, token string, require bool, oauth TokenVal
 		}
 
 		needAuth := require || (token != "" && !isLoopback(r.RemoteAddr))
-		if !needAuth && oauth == nil {
-			next.ServeHTTP(w, r)
-			return
-		}
-		// When OAuth is enabled we always require *some* credential on
-		// non-loopback (or when require=true), so clients can complete the
-		// discovery → authorize → token flow.
-		if oauth != nil && (require || !isLoopback(r.RemoteAddr)) {
+		// OAuth-enabled servers always protect /mcp etc.: clients must present
+		// either the static token or an OAuth access token. Public OAuth routes
+		// are already excluded above.
+		if oauth != nil {
 			needAuth = true
 		}
 		if !needAuth {
