@@ -283,10 +283,13 @@ func runTunnel(provider, cfgPath string) {
 	// A tunnel exposes the device to the public internet, and tunnel traffic
 	// arrives from the local cloudflared proxy (127.0.0.1), which the auth
 	// middleware treats as loopback. Loopback is only exempt when
-	// auth.require is false — so a tunnel MUST have the token enforced.
-	if cfg.Auth.Token == "" || !cfg.Auth.Require {
+	// auth.require is false — so a tunnel MUST have the token enforced,
+	// or OAuth enabled so clients complete the authorization flow.
+	hasStatic := cfg.Auth.Token != "" && cfg.Auth.Require
+	hasOAuth := cfg.Auth.OAuth
+	if !hasStatic && !hasOAuth {
 		log.Fatalf("refusing to start a tunnel without enforced auth: " +
-			"set auth.require: true and auth.token in the config " +
+			"set auth.require: true and auth.token, or auth.oauth: true " +
 			"(generate a token with: termux-mcp token new --write)")
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
