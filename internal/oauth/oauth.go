@@ -22,9 +22,8 @@ import (
 )
 
 const (
-	codeTTL   = 10 * time.Minute
-	tokenTTL  = 24 * time.Hour
-	clientTTL = 365 * 24 * time.Hour
+	codeTTL  = 10 * time.Minute
+	tokenTTL = 24 * time.Hour
 )
 
 // Server is an in-process OAuth 2.1 AS + resource server helper.
@@ -62,11 +61,11 @@ type authCode struct {
 }
 
 type accessToken struct {
-	Token     string
-	ClientID  string
-	Scope     string
-	Expires   time.Time
-	Created   time.Time
+	Token    string
+	ClientID string
+	Scope    string
+	Expires  time.Time
+	Created  time.Time
 }
 
 // New creates an OAuth server. publicBase may be empty (inferred per-request).
@@ -85,14 +84,10 @@ func (s *Server) baseURL(r *http.Request) string {
 		return s.PublicBase
 	}
 	scheme := "https"
-	if r.TLS == nil && r.Header.Get("X-Forwarded-Proto") != "https" {
-		// Cloudflare tunnel sets X-Forwarded-Proto; plain local stays http.
-		if r.Header.Get("X-Forwarded-Proto") == "http" || r.TLS == nil {
-			scheme = "http"
-		}
-	}
 	if p := r.Header.Get("X-Forwarded-Proto"); p != "" {
 		scheme = p
+	} else if r.TLS == nil {
+		scheme = "http"
 	}
 	host := r.Host
 	if fh := r.Header.Get("X-Forwarded-Host"); fh != "" {
@@ -113,11 +108,6 @@ func (s *Server) ValidAccessToken(token string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	at, ok := s.tokens[token]
-	if !ok || at.Used || time.Now().After(at.Expires) {
-		// fix: accessToken has no Used field — check expiry only
-		_ = ok
-	}
-	at, ok = s.tokens[token]
 	return ok && time.Now().Before(at.Expires)
 }
 
@@ -279,7 +269,6 @@ func (s *Server) authorizeGET(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Show consent page.
 	name := c.Name
 	if name == "" {
 		name = clientID
@@ -302,7 +291,6 @@ func (s *Server) authorizePOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Form.Get("decision") != "approve" {
-		// Deny: redirect with error if possible.
 		ru := r.Form.Get("redirect_uri")
 		if ru != "" {
 			u, err := url.Parse(ru)
@@ -407,7 +395,6 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Optional client secret check for confidential clients.
 	if c, ok := s.clients[clientID]; ok && c.Secret != "" {
 		if r.Form.Get("client_secret") != c.Secret {
 			writeOAuthError(w, "invalid_client", "bad client_secret", http.StatusUnauthorized)
@@ -434,7 +421,6 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleConsentPage(w http.ResponseWriter, r *http.Request) {
-	// Convenience landing page explaining the flow.
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprint(w, `<!DOCTYPE html><html><head><meta charset="utf-8"><title>termux-mcp OAuth</title>
 <style>body{font-family:system-ui;max-width:40rem;margin:2rem auto;padding:0 1rem;background:#0f1115;color:#e8eaed}
