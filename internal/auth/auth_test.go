@@ -30,7 +30,7 @@ func TestRequireBearer(t *testing.T) {
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	h := RequireBearer(next, "tok123", true)
+	h := RequireBearer(next, "tok123", true, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
 	rr := httptest.NewRecorder()
@@ -52,7 +52,7 @@ func TestRequireBearerDisabled(t *testing.T) {
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	h := RequireBearer(next, "", false)
+	h := RequireBearer(next, "", false, nil)
 	req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -88,7 +88,7 @@ func TestRequireBearerLoopback(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			h := RequireBearer(next, "tok123", c.require)
+			h := RequireBearer(next, "tok123", c.require, nil)
 			req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
 			req.RemoteAddr = c.remote
 			if c.header != "" {
