@@ -32,8 +32,10 @@ type ServerConfig struct {
 }
 
 type AuthConfig struct {
-	Token   string `yaml:"token"`
-	Require bool   `yaml:"require"` // enforce token even on loopback
+	Token      string `yaml:"token"`
+	Require    bool   `yaml:"require"` // enforce token even on loopback
+	OAuth      bool   `yaml:"oauth"`   // enable OAuth 2.1 + PKCE endpoints
+	PublicBase string `yaml:"public_base"` // e.g. https://xxx.trycloudflare.com
 }
 
 type ToolsConfig struct {
@@ -71,6 +73,7 @@ func Default() *Config {
 	c.Server.Port = 3000
 	c.Server.MaxBodyBytes = 1 << 20 // 1 MiB
 	c.Server.MaxSessions = 32
+	c.Auth.OAuth = true // enable by default for HTTP clients that require OAuth
 	c.Exec.DefaultTimeoutSeconds = 30
 	c.Exec.MaxOutputBytes = 1 << 20  // 1 MiB
 	c.Exec.MaxTaskLogBytes = 8 << 20 // 8 MiB per stream
@@ -153,6 +156,8 @@ func fileExists(p string) bool {
 func applyEnv(c *Config) {
 	setStr(&c.Auth.Token, os.Getenv("TERMUX_MCP_AUTH_TOKEN"))
 	setBool(&c.Auth.Require, os.Getenv("TERMUX_MCP_AUTH_REQUIRE"))
+	setBool(&c.Auth.OAuth, os.Getenv("TERMUX_MCP_AUTH_OAUTH"))
+	setStr(&c.Auth.PublicBase, os.Getenv("TERMUX_MCP_AUTH_PUBLIC_BASE"))
 	setStr(&c.Server.Mode, os.Getenv("TERMUX_MCP_SERVER_MODE"))
 	setStr(&c.Server.Bind, os.Getenv("TERMUX_MCP_SERVER_BIND"))
 	setInt(&c.Server.Port, os.Getenv("TERMUX_MCP_SERVER_PORT"))
@@ -245,9 +250,10 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("exec.max_task_log_bytes must be > 0")
 	}
 
-	// Refuse to expose the device without a token on non-loopback binds.
-	if c.Server.Mode == "http" && c.IsNonLoopback() && !c.Auth.Require && c.Auth.Token == "" {
-		return fmt.Errorf("refusing to bind %s without auth.token: set TERMUX_MCP_AUTH_TOKEN", c.HTTPAddr())
+	// Refuse to expose the device without a token on non-loopback binds
+	// unless OAuth is enabled (clients can complete the OAuth flow).
+	if c.Server.Mode == "http" && c.IsNonLoopback() && !c.Auth.Require && c.Auth.Token == "" && !c.Auth.OAuth {
+		return fmt.Errorf("refusing to bind %s without auth.token or auth.oauth: set TERMUX_MCP_AUTH_TOKEN or auth.oauth: true", c.HTTPAddr())
 	}
 
 	// Shell tool is allowlist-only: enabling it requires at least one pattern.
