@@ -270,9 +270,17 @@ func (c *Config) HTTPAddr() string {
 }
 
 // IsNonLoopback reports whether the configured bind address is not loopback.
+// It parses the address as an IP so the whole 127.0.0.0/8 range and ::1 are
+// treated as loopback, matching auth.isLoopback. Unparseable hosts fail closed.
 func (c *Config) IsNonLoopback() bool {
 	h := c.Server.Bind
-	return h != "" && h != "127.0.0.1" && h != "::1" && h != "localhost"
+	if h == "" || h == "localhost" {
+		return false
+	}
+	if ip := net.ParseIP(h); ip != nil {
+		return !ip.IsLoopback()
+	}
+	return true
 }
 
 // Sanitized returns a copy with secrets removed, safe for logging/status.
