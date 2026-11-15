@@ -63,13 +63,30 @@ func TerminalStreamHandler(mgr *tasks.Manager, taskDir string) http.Handler {
 			return
 		}
 
-		stdoutPath := filepath.Join(taskDir, taskID, "stdout.log")
-		f, err := os.Open(stdoutPath)
-		if err != nil {
+		streamParam := r.URL.Query().Get("stream")
+		type logPath struct{ event, path string }
+		paths := []logPath{{"output", filepath.Join(taskDir, taskID, "stdout.log")}}
+		if streamParam == "all" {
+			paths = append(paths, logPath{"stderr", filepath.Join(taskDir, taskID, "stderr.log")})
+		}
+		type openStream struct {
+			event string
+			file  *os.File
+			seen  int64
+		}
+		var streams []openStream
+		for _, p := range paths {
+			f, err := os.Open(p.path)
+			if err != nil {
+				continue // log may not exist yet
+			}
+			defer f.Close()
+			streams = append(streams, openStream{event: p.event, file: f})
+		}
+		if len(streams) == 0 {
 			_ = sse.send("error", `{"message":"log file not available"}`)
 			return
 		}
-		defer f.Close()
 
 		// Send initial task info.
 		initMsg, _ := json.Marshal(map[string]any{
@@ -82,8 +99,10 @@ func TerminalStreamHandler(mgr *tasks.Manager, taskDir string) http.Handler {
 
 		// If the task already finished, send whatever is in the log and exit.
 		if info.State != tasks.StateRunning {
-			if data, err := io.ReadAll(f); err == nil && len(data) > 0 {
-				_ = sse.sendBytes("output", data)
+			for _, st := range streams {
+				if data, err := io.ReadAll(st.file); err == nil && len(data) > 0 {
+					_ = sse.sendBytes(st.event, data)
+				}
 			}
 			finalMsg, _ := json.Marshal(map[string]any{
 				"type":      "done",
@@ -99,27 +118,29 @@ func TerminalStreamHandler(mgr *tasks.Manager, taskDir string) http.Handler {
 		ticker := time.NewTicker(pollInterval)
 		defer ticker.Stop()
 
-		seen := int64(0)
 		for {
 			select {
 			case <-r.Context().Done():
 				return
 			case <-ticker.C:
-				// Read any new bytes.
-				stat, err := f.Stat()
-				if err != nil {
-					continue
-				}
-				size := stat.Size()
-				if size > seen {
-					buf := make([]byte, size-seen)
-					n, err := f.ReadAt(buf, seen)
-					if n > 0 {
-						seen += int64(n)
-						_ = sse.sendBytes("output", buf[:n])
+				// Read any new bytes from every stream.
+				for i := range streams {
+					st := &streams[i]
+					stat, err := st.file.Stat()
+					if err != nil {
+						continue
 					}
-					if err != nil && err != io.EOF {
-						slog.Warn("terminal stream read error", "err", err)
+					size := stat.Size()
+					if size > st.seen {
+						buf := make([]byte, size-st.seen)
+						n, err := st.file.ReadAt(buf, st.seen)
+						if n > 0 {
+							st.seen += int64(n)
+							_ = sse.sendBytes(st.event, buf[:n])
+						}
+						if err != nil && err != io.EOF {
+							slog.Warn("terminal stream read error", "err", err)
+						}
 					}
 				}
 
@@ -130,12 +151,14 @@ func TerminalStreamHandler(mgr *tasks.Manager, taskDir string) http.Handler {
 				}
 				if info.State != tasks.StateRunning {
 					// Drain any remaining bytes.
-					stat, err = f.Stat()
-					if err == nil && stat.Size() > seen {
-						buf := make([]byte, stat.Size()-seen)
-						n, _ := f.ReadAt(buf, seen)
-						if n > 0 {
-							_ = sse.sendBytes("output", buf[:n])
+					for i := range streams {
+						st := &streams[i]
+						if stat, err := st.file.Stat(); err == nil && stat.Size() > st.seen {
+							buf := make([]byte, stat.Size()-st.seen)
+							n, _ := st.file.ReadAt(buf, st.seen)
+							if n > 0 {
+								_ = sse.sendBytes(st.event, buf[:n])
+							}
 						}
 					}
 					finalMsg, _ := json.Marshal(map[string]any{
