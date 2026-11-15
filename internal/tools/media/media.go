@@ -59,7 +59,6 @@ func All(k *kit.Kit) []registry.Tool {
 		{Def: mcp.NewTool("speech_to_text",
 			mcp.WithDescription("Transcribe speech from the microphone via termux-speech-to-text."),
 			mcp.WithString("lang", mcp.Description("Language code, e.g. en-US")),
-			mcp.WithNumber("duration", mcp.Description("Max listening time in seconds, 1-60 (default 5)"), mcp.Min(1), mcp.Max(60))),
 			Handler: speechToText(k),
 			Meta:    registry.Meta{Module: "media", Tier: registry.TierSensitive}},
 	}
@@ -163,10 +162,10 @@ func textToSpeech(k *kit.Kit) server.ToolHandlerFunc {
 		}
 		args := []string{}
 		if r := kit.NumArg(req, "rate"); r > 0 {
-			args = append(args, "--rate", ftoa(r))
+			args = append(args, "-r", ftoa(r))
 		}
 		if p := kit.NumArg(req, "pitch"); p > 0 {
-			args = append(args, "--pitch", ftoa(p))
+			args = append(args, "-p", ftoa(p))
 		}
 		args = append(args, text)
 		res, err := k.Run(ctx, "termux-tts-speak", args, 0)
@@ -185,9 +184,6 @@ func speechToText(k *kit.Kit) server.ToolHandlerFunc {
 		args := []string{}
 		if l := kit.StrArg(req, "lang"); l != "" {
 			args = append(args, "-l", l)
-		}
-		if d := int(math.Round(kit.NumArg(req, "duration"))); d > 0 {
-			args = append(args, "-d", itoa(d))
 		}
 		res, err := k.Run(ctx, "termux-speech-to-text", args, 0)
 		if err != nil {
