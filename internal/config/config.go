@@ -130,6 +130,22 @@ func Load(path string) (*Config, error) {
 	return c, nil
 }
 
+// DefaultPath returns the conventional config file location for this
+// environment, without requiring that a file already exist there (unlike
+// discover, which backs Load and only ever returns a path it found on
+// disk). CLI commands that create or rewrite the config file (e.g.
+// "token new --write" with no --config flag) use this so they target the
+// same location Load would read from on a fresh install.
+func DefaultPath() string {
+	if p := os.Getenv("TERMUX_MCP_CONFIG"); p != "" {
+		return p
+	}
+	if p := os.Getenv("PREFIX"); p != "" {
+		return filepath.Join(p, "var", "lib", "termux-mcp", "config.yaml")
+	}
+	return "config.yaml"
+}
+
 // discover locates a config.yaml in the documented default locations.
 // It returns "" when none exists (pure defaults + env then apply).
 func discover() string {

@@ -15,24 +15,7 @@ import (
 	"termux-mcp/internal/tasks"
 )
 
-var taskIDRe = regexp.MustCompile(`^t[0-9]{6}// Package server – terminal streaming handler: tails a background task's
-// stdout.log and streams it to the client as Server-Sent Events.
-package server
-
-import (
-	"encoding/json"
-	"io"
-	"log/slog"
-	"net/http"
-	"os"
-	"path/filepath"
-	"regexp"
-	"time"
-
-	"termux-mcp/internal/tasks"
-)
-
-)
+var taskIDRe = regexp.MustCompile(`^t[0-9]{6}$`)
 
 // TerminalStreamHandler returns an http.Handler for GET /terminal/stream.
 // Query params:

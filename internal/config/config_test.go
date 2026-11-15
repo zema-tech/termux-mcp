@@ -90,11 +90,15 @@ func TestEnvOverrides(t *testing.T) {
 func TestNonLoopbackRequiresToken(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(p, []byte("server:\n  mode: http\n  bind: 0.0.0.0\n"), 0o600); err != nil {
+	// auth.oauth defaults to true (see Default/TestDefaultEnablesOAuth), so
+	// exercising the "nothing at all configured" failure mode requires
+	// explicitly turning it off here, otherwise the OAuth default alone
+	// would satisfy Validate and this would no longer test the guard.
+	if err := os.WriteFile(p, []byte("server:\n  mode: http\n  bind: 0.0.0.0\nauth:\n  oauth: false\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Load(p); err == nil {
-		t.Fatal("expected error binding non-loopback without token")
+		t.Fatal("expected error binding non-loopback without token or oauth")
 	}
 
 	// With a token it must pass.
@@ -105,6 +109,27 @@ func TestNonLoopbackRequiresToken(t *testing.T) {
 	}
 	if !c.IsNonLoopback() {
 		t.Fatal("expected non-loopback")
+	}
+}
+
+// TestDefaultOAuthSatisfiesNonLoopbackGuard locks in the intended behavior
+// behind the change above: a non-loopback http bind with no static token
+// must still pass validation when auth.oauth is on (the implicit default),
+// because every request is then gated behind a real OAuth access token
+// (see auth.RequireBearer forcing needAuth when a TokenValidator is set),
+// not left open.
+func TestDefaultOAuthSatisfiesNonLoopbackGuard(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(p, []byte("server:\n  mode: http\n  bind: 0.0.0.0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(p)
+	if err != nil {
+		t.Fatalf("load with default oauth=true: %v", err)
+	}
+	if !c.Auth.OAuth {
+		t.Fatal("expected auth.oauth to default to true")
 	}
 }
 

@@ -127,7 +127,7 @@ func downloadFile(url, destination string) error {
 		return fmt.Errorf("create update: %w", err)
 	}
 	limited := io.LimitReader(response.Body, maxUpdateBytes+1)
-	_, copyErr := io.Copy(file, limited)
+	written, copyErr := io.Copy(file, limited)
 	closeErr := file.Close()
 	if copyErr != nil {
 		return fmt.Errorf("write update: %w", copyErr)
@@ -135,7 +135,11 @@ func downloadFile(url, destination string) error {
 	if closeErr != nil {
 		return fmt.Errorf("close update: %w", closeErr)
 	}
-	if fi, serr := file.Stat(); serr == nil && fi.Size() > maxUpdateBytes {
+	// Checked against io.Copy's own count, not a post-Close Stat (which
+	// always errors on a closed *os.File and so never caught this): a
+	// release larger than the cap would otherwise be silently truncated
+	// at maxUpdateBytes+1 bytes and still promoted to the live binary.
+	if written > maxUpdateBytes {
 		return fmt.Errorf("download update: file exceeds %d bytes", maxUpdateBytes)
 	}
 	return nil

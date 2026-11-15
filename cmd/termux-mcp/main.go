@@ -308,28 +308,50 @@ func newToken() string {
 	return hex.EncodeToString(b)
 }
 
-// persistToken sets auth.token in the YAML config file, preserving the rest.
+// persistToken sets auth.token in the YAML config file, preserving the rest
+// of its contents. With no explicit path it targets the same conventional
+// location config.Load would read from (config.DefaultPath), and it creates
+// that file (and its parent directory) from scratch when it doesn't exist
+// yet — matching the documented standalone command
+// "termux-mcp token new --write", which previously failed outright in both
+// of these cases ("no config file given" with no --config/env, or a read
+// error on a fresh install with no config.yaml yet).
 func persistToken(cfgPath string, token string) error {
 	if cfgPath == "" {
-		return fmt.Errorf("no config file given (use --config or TERMUX_MCP_CONFIG)")
+		cfgPath = config.DefaultPath()
 	}
-	data, err := os.ReadFile(cfgPath)
-	if err != nil {
-		return err
-	}
+
 	var m map[string]any
-	if err := yaml.Unmarshal(data, &m); err != nil {
+	data, err := os.ReadFile(cfgPath)
+	switch {
+	case err == nil:
+		if err := yaml.Unmarshal(data, &m); err != nil {
+			return fmt.Errorf("parse config %s: %w", cfgPath, err)
+		}
+	case os.IsNotExist(err):
+		// Fresh install: start from an empty document rather than failing.
+	default:
 		return err
 	}
+	if m == nil {
+		m = map[string]any{}
+	}
+
 	authMap, _ := m["auth"].(map[string]any)
 	if authMap == nil {
 		authMap = map[string]any{}
 	}
 	authMap["token"] = token
 	m["auth"] = authMap
+
 	out, err := yaml.Marshal(m)
 	if err != nil {
 		return err
+	}
+	if dir := filepath.Dir(cfgPath); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return fmt.Errorf("create config dir %s: %w", dir, err)
+		}
 	}
 	return os.WriteFile(cfgPath, out, 0o600)
 }
