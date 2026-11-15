@@ -9,9 +9,29 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 
 	"termux-mcp/internal/tasks"
+)
+
+var taskIDRe = regexp.MustCompile(`^t[0-9]{6}// Package server – terminal streaming handler: tails a background task's
+// stdout.log and streams it to the client as Server-Sent Events.
+package server
+
+import (
+	"encoding/json"
+	"io"
+	"log/slog"
+	"net/http"
+	"os"
+	"path/filepath"
+	"regexp"
+	"time"
+
+	"termux-mcp/internal/tasks"
+)
+
 )
 
 // TerminalStreamHandler returns an http.Handler for GET /terminal/stream.
@@ -24,6 +44,10 @@ func TerminalStreamHandler(mgr *tasks.Manager, taskDir string) http.Handler {
 		taskID := r.URL.Query().Get("task_id")
 		if taskID == "" {
 			http.Error(w, `{"error":"missing task_id"}`, http.StatusBadRequest)
+			return
+		}
+		if !taskIDRe.MatchString(taskID) {
+			http.Error(w, `{"error":"invalid task_id"}`, http.StatusBadRequest)
 			return
 		}
 
