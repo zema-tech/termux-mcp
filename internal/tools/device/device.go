@@ -233,13 +233,29 @@ func readSensor(k *kit.Kit) server.ToolHandlerFunc {
 		if d > 10 {
 			d = 10
 		}
-		raw, err := k.RunJSON(ctx, "termux-sensor", []string{"-s", name, "-d", itoa(d)}, 0, true)
+		// termux-sensor emits NDJSON (one JSON object per line) and its -d flag
+		// is the update delay in ms, not the sampling duration. Sample once per
+		// second for d seconds via -n, then parse the last valid line.
+		res, err := k.Run(ctx, "termux-sensor", []string{"-s", name, "-d", "1000", "-n", itoa(d)}, 0)
 		if err != nil {
 			return kit.ResultError("%v", err), nil
 		}
+		if res.ExitCode != 0 {
+			return kit.ResultError("termux-sensor exited %d: %s", res.ExitCode, strings.TrimSpace(res.Stderr)), nil
+		}
 		var v any
-		if err := json.Unmarshal(raw, &v); err != nil {
-			return kit.ResultError("%v", err), nil
+		for _, line := range strings.Split(res.Stdout, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			var sample any
+			if json.Unmarshal([]byte(line), &sample) == nil {
+				v = sample
+			}
+		}
+		if v == nil {
+			return kit.ResultError("termux-sensor produced no valid JSON samples"), nil
 		}
 		return kit.ResultJSON(v), nil
 	}
