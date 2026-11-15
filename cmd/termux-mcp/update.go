@@ -15,7 +15,10 @@ import (
 	vpkg "termux-mcp/internal/version"
 )
 
-const defaultRepo = "TecnicalBot/termux-mcp"
+const defaultRepo = "zema-tech/termux-mcp"
+
+// maxUpdateBytes caps the downloaded binary to avoid unbounded downloads.
+const maxUpdateBytes = 256 << 20
 
 type latestRelease struct {
 	TagName string `json:"tag_name"`
@@ -123,13 +126,17 @@ func downloadFile(url, destination string) error {
 	if err != nil {
 		return fmt.Errorf("create update: %w", err)
 	}
-	_, copyErr := io.Copy(file, response.Body)
+	limited := io.LimitReader(response.Body, maxUpdateBytes+1)
+	_, copyErr := io.Copy(file, limited)
 	closeErr := file.Close()
 	if copyErr != nil {
 		return fmt.Errorf("write update: %w", copyErr)
 	}
 	if closeErr != nil {
 		return fmt.Errorf("close update: %w", closeErr)
+	}
+	if fi, serr := file.Stat(); serr == nil && fi.Size() > maxUpdateBytes {
+		return fmt.Errorf("download update: file exceeds %d bytes", maxUpdateBytes)
 	}
 	return nil
 }
