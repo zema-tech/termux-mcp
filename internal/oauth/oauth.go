@@ -9,6 +9,7 @@ package oauth
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -24,6 +25,9 @@ import (
 const (
 	codeTTL  = 10 * time.Minute
 	tokenTTL = 24 * time.Hour
+
+	// maxRegisteredClients caps dynamic client registrations to bound memory.
+	maxRegisteredClients = 256
 )
 
 // Server is an in-process OAuth 2.1 AS + resource server helper.
@@ -70,12 +74,36 @@ type accessToken struct {
 
 // New creates an OAuth server. publicBase may be empty (inferred per-request).
 func New(publicBase string) *Server {
-	return &Server{
+	s := &Server{
 		clients:      make(map[string]*client),
 		codes:        make(map[string]*authCode),
 		tokens:       make(map[string]*accessToken),
 		PublicBase:   strings.TrimRight(publicBase, "/"),
 		ResourcePath: "/mcp",
+	}
+	go s.janitor()
+	return s
+}
+
+// janitor periodically removes expired authorization codes and access tokens
+// so the in-memory stores do not grow without bound.
+func (s *Server) janitor() {
+	t := time.NewTicker(5 * time.Minute)
+	defer t.Stop()
+	for range t.C {
+		now := time.Now()
+		s.mu.Lock()
+		for k, c := range s.codes {
+			if now.After(c.Expires) {
+				delete(s.codes, k)
+			}
+		}
+		for k, tk := range s.tokens {
+			if now.After(tk.Expires) {
+				delete(s.tokens, k)
+			}
+		}
+		s.mu.Unlock()
 	}
 }
 
@@ -160,6 +188,13 @@ func (s *Server) handleASMetadata(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	s.mu.RLock()
+	full := len(s.clients) >= maxRegisteredClients
+	s.mu.RUnlock()
+	if full {
+		http.Error(w, `{"error":"server_error","error_description":"client registry full"}`, http.StatusServiceUnavailable)
 		return
 	}
 	var req struct {
@@ -396,7 +431,7 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if c, ok := s.clients[clientID]; ok && c.Secret != "" {
-		if r.Form.Get("client_secret") != c.Secret {
+		if subtle.ConstantTimeCompare([]byte(r.Form.Get("client_secret")), []byte(c.Secret)) != 1 {
 			writeOAuthError(w, "invalid_client", "bad client_secret", http.StatusUnauthorized)
 			return
 		}
@@ -456,7 +491,9 @@ func writeOAuthError(w http.ResponseWriter, code, desc string, status int) {
 
 func randomToken(nBytes int) string {
 	b := make([]byte, nBytes)
-	_, _ = rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		return ""
+	}
 	return hex.EncodeToString(b)
 }
 
