@@ -20,11 +20,13 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -275,6 +277,31 @@ func runDoctor(cfgPath string) {
 	}
 }
 
+// tunnelTargetProbeTimeout bounds the preflight connection attempt so a
+// filtered address fails fast instead of hanging the CLI.
+const tunnelTargetProbeTimeout = 2 * time.Second
+
+// probeTunnelTarget verifies that a server is already accepting TCP
+// connections on the configured HTTP address. cloudflared happily starts a
+// quick tunnel even when the upstream is down, which leaves an orphan tunnel
+// publishing 502s; fail before launching it instead.
+func probeTunnelTarget(addr string) error {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("invalid listen address %q: %w", addr, err)
+	}
+	switch host {
+	case "", "0.0.0.0", "::":
+		host = "127.0.0.1"
+	}
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), tunnelTargetProbeTimeout)
+	if err != nil {
+		return fmt.Errorf("no server listening at %s (%w); start it first with: termux-mcp serve http", addr, err)
+	}
+	_ = conn.Close()
+	return nil
+}
+
 func runTunnel(provider, cfgPath string) {
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
@@ -291,6 +318,9 @@ func runTunnel(provider, cfgPath string) {
 		log.Fatalf("refusing to start a tunnel without enforced auth: " +
 			"set auth.require: true and auth.token, or auth.oauth: true " +
 			"(generate a token with: termux-mcp token new --write)")
+	}
+	if err := probeTunnelTarget(cfg.HTTPAddr()); err != nil {
+		log.Fatalf("tunnel preflight: %v", err)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

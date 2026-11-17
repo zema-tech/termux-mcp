@@ -42,6 +42,17 @@ termux-mcp tunnel start                    # prints https://xxx.trycloudflare.co
 - `auth.token` is set **and** `auth.require: true`, or
 - `auth.oauth: true` (clients complete OAuth on the public URL).
 
+It also performs a preflight TCP probe against the configured
+`server.bind`/`server.port` (wildcard binds are probed on `127.0.0.1`). If no
+server is listening it exits before launching cloudflared:
+
+```
+tunnel preflight: no server listening at 127.0.0.1:3000 (dial tcp ... connect: connection refused); start it first with: termux-mcp serve http
+```
+
+This prevents an orphan quick tunnel that publishes 502s for the whole hostname
+lifetime.
+
 Tunnel traffic arrives from the local cloudflared proxy (loopback).
 
 ### Static Bearer clients
