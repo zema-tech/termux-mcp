@@ -186,8 +186,10 @@ func showToast(k *kit.Kit) server.ToolHandlerFunc {
 			return kit.ResultError("%v", err), nil
 		}
 		args := []string{text}
-		if l := kit.StrArg(req, "length"); l != "" {
-			args = append([]string{"-s", l}, args...)
+		if l := kit.StrArg(req, "length"); l == "long" {
+			args = append([]string{"-l"}, args...)
+		} else if l == "short" {
+			args = append([]string{"-s"}, args...)
 		}
 		res, err := k.Run(ctx, "termux-toast", args, 0)
 		if err != nil {

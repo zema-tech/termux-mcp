@@ -73,10 +73,10 @@ func TerminalStreamHandler(mgr *tasks.Manager, taskDir string) http.Handler {
 
 		// Send initial task info.
 		initMsg, _ := json.Marshal(map[string]any{
-			"task_id":  info.ID,
-			"command":  info.Command,
-			"state":    info.State,
-			"pid":      info.PID,
+			"task_id": info.ID,
+			"command": info.Command,
+			"state":   info.State,
+			"pid":     info.PID,
 		})
 		_ = sse.send("init", string(initMsg))
 

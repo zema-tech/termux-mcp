@@ -166,7 +166,8 @@ func inputText(k *kit.Kit) server.ToolHandlerFunc {
 		if err != nil {
 			return kit.ResultError("%v", err), nil
 		}
-		return inputRun(k, ctx, []string{"text", text})
+		// Android input text splits on spaces; encode them as %s.
+		return inputRun(k, ctx, []string{"text", strings.ReplaceAll(text, " ", "%s")})
 	}
 }
 
