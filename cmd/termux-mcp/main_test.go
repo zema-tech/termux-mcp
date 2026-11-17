@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net"
 	"strings"
 	"testing"
 
@@ -82,5 +83,41 @@ func TestReleaseArch(t *testing.T) {
 	}
 	if _, err := releaseArch("amd64"); err == nil {
 		t.Fatal("releaseArch(amd64) should reject an unavailable release")
+	}
+}
+
+func TestProbeTunnelTarget(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := ln.Addr().String()
+	if err := probeTunnelTarget(addr); err != nil {
+		t.Fatalf("probeTunnelTarget(%q) while listening = %v, want nil", addr, err)
+	}
+	_ = ln.Close()
+	if err := probeTunnelTarget(addr); err == nil {
+		t.Fatalf("probeTunnelTarget(%q) after close = nil, want error", addr)
+	}
+}
+
+func TestProbeTunnelTargetWildcard(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	_, port, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		t.Fatalf("split: %v", err)
+	}
+	if err := probeTunnelTarget(net.JoinHostPort("0.0.0.0", port)); err != nil {
+		t.Fatalf("probeTunnelTarget(0.0.0.0) = %v, want nil (wildcard normalised to loopback)", err)
+	}
+}
+
+func TestProbeTunnelTargetBadAddr(t *testing.T) {
+	if err := probeTunnelTarget("not-an-address"); err == nil {
+		t.Fatal("probeTunnelTarget(garbage) = nil, want error")
 	}
 }

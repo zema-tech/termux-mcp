@@ -99,6 +99,11 @@ termux-mcp serve http &          # loopback is enough
 termux-mcp tunnel start          # prints https://xxx.trycloudflare.com
 ```
 
+`tunnel start` first probes the configured `server.bind`/`server.port` and
+aborts with a clear error if nothing is listening there yet, so you never get
+an orphan tunnel serving 502s. Enforce auth (`auth.token` + `auth.require`, or
+`auth.oauth: true`) or the command refuses to start.
+
 See [Remote access](docs/REMOTE_ACCESS.md) for full client configs, including
 stdio-only hosts via `mcp-remote`.
 
