@@ -18,6 +18,7 @@
 [![Platform](https://img.shields.io/badge/platform-Android%20%7C%20Termux-3DDC84?logo=android&logoColor=white)](https://termux.dev/)
 [![Protocol](https://img.shields.io/badge/protocol-MCP-7357FF)](https://modelcontextprotocol.io/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/zema-tech/termux-mcp?style=social)](https://github.com/zema-tech/termux-mcp/stargazers)
 
 [Demo](https://youtu.be/nLKPv9LPL1Y) · [Configuration](docs/CONFIGURATION.md) · [Remote access](docs/REMOTE_ACCESS.md) · [Security](docs/SECURITY.md)
 
@@ -29,7 +30,7 @@
 
 **termux-mcp** is a Go-based [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that exposes selected Termux and Android capabilities to AI applications.
 
-It creates a bridge between an MCP client and the tools available on your Android device: device information, communication, media, files, UI automation, command execution and background tasks.
+It creates a bridge between an MCP client and the tools available on your Android device: device information, location, communication, media, files, UI automation, command execution and background tasks.
 
 Use it with a local agent over **stdio**, connect over your **LAN** with Streamable HTTP, or make it reachable remotely through a **Cloudflare quick tunnel**.
 
@@ -47,17 +48,18 @@ Use it with a local agent over **stdio**, connect over your **LAN** with Streama
 
 ## ✧ Highlights
 
-| Capability | What it does |
-|---|---|
-| **9 tool modules** | Access device, communication, media, files, UI and task capabilities through MCP. |
-| **Multiple transports** | Local stdio or Streamable HTTP for LAN and remote clients. |
-| **Remote connectivity** | Cloudflare quick tunnels with token authentication or OAuth 2.1. |
-| **Permission tiers** | Sensitive and dangerous modules can be gated independently. |
-| **Filesystem sandbox** | File operations are restricted to configured roots and resolve symlinks. |
-| **Background tasks** | Launch detached work and inspect task status or logs. |
-| **Audit trail** | JSONL records with sensitive argument redaction. |
-| **Termux integration** | Optional supervised service and Termux:Boot startup integration. |
-| **Diagnostics and updates** | Built-in `doctor`, `version` and `update` commands. |
+| | Capability | What it does |
+|---|---|---|
+| 🧰 | **9 tool modules** | Device, communication, media, files, UI, shell and tasks through MCP. |
+| 🔌 | **Multiple transports** | Local stdio or Streamable HTTP for LAN and remote clients. |
+| 🌐 | **Remote connectivity** | Cloudflare quick tunnels with token auth or OAuth 2.1. |
+| 🔐 | **Permission tiers** | Sensitive and dangerous modules gated independently. |
+| 📁 | **Filesystem sandbox** | Restricted to configured roots; symlink-safe resolution. |
+| 📍 | **Location** | GPS / network / passive via `get_location`. |
+| 🧭 | **UI automation** | Screenshots, hierarchy dump, tap, swipe, long-press, click-by-text. |
+| 🧵 | **Background tasks** | Detached jobs with status and log inspection. |
+| 📋 | **Audit trail** | JSONL records with sensitive argument redaction. |
+| 🩺 | **Diagnostics** | Built-in `doctor`, `version` and `update` commands. |
 
 ## 🧩 Tool modules
 
@@ -65,21 +67,33 @@ The server groups its tools into nine modules. Availability depends on the confi
 
 | Module | Access tier | Capabilities |
 |---|---|---|
-| **A · Device & System** | Safe | Battery, device information, storage, screen size, brightness, volume, vibration, flashlight, Wi-Fi, telephony and sensors. |
-| **B · Communication** | Sensitive | SMS, contacts, call log, calls, notifications and toasts. |
-| **C · Media** | Sensitive | Camera, audio recording, media player, text-to-speech and speech-to-text. |
-| **D · Clipboard & Input** | Safe | Clipboard read/write, open URL and open app. |
-| **E · Files** | Sensitive | List, read, write, download, share and media scan, subject to filesystem sandbox roots. |
-| **F · UI Automation** | Dangerous | Screenshots, UI hierarchy dump, taps, swipes, text input and key events. |
-| **G · Shell & Tasks** | Review carefully | Command execution, detached task launch, task status and task logs. |
-| **H · Utility** | Safe | Ping, server status, configuration inspection and tool listing. |
-| **I · Task Control** | Dangerous | Stop and delete background tasks. |
+| **A · Device & System** | 🟢 Safe | Battery, device info, storage, screen, brightness, volume, vibration, flashlight, Wi-Fi, telephony, sensors, **location**. |
+| **B · Communication** | 🟡 Sensitive | SMS, contacts, call log, calls, notifications and toasts. |
+| **C · Media** | 🟡 Sensitive | Camera, audio recording, media player, text-to-speech and speech-to-text. |
+| **D · Clipboard & Input** | 🟢 Safe | Clipboard read/write, open URL and open app. |
+| **E · Files** | 🟡 Sensitive | List, read, write, download, share, media scan, **search**, **file info**, **move**, **delete** (sandboxed). |
+| **F · UI Automation** | 🔴 Dangerous | Screenshots, UI dump, tap, swipe, **long-press**, **click-by-text**, text input and key events. |
+| **G · Shell & Tasks** | ⚠️ Review | Command execution, detached task launch, task status and task logs. |
+| **H · Utility** | 🟢 Safe | Ping, server status, configuration inspection and tool listing. |
+| **I · Task Control** | 🔴 Dangerous | Stop and delete background tasks. |
 
 **Permission notes**
 
 - Modules **B, C and E** require `tools.enable_sensitive: true`.
 - Modules **F and I** require `tools.enable_dangerous: true` and applicable allow/deny rules.
 - Shell execution is controlled separately through `exec.shell_allowed`, `exec.shell_allow_patterns` and `exec.shell_deny_patterns`. See the security warning below: the shipped configuration currently enables it with a wildcard allow pattern by default.
+
+### Recent tools (batch 1)
+
+| Tool | Module | Tier | Description |
+|---|---|---|---|
+| `get_location` | Device | Safe | Device location via `termux-location` (`gps` / `network` / `passive`). |
+| `search_files` | Files | Sensitive | Glob name search under a sandbox root (recursive, capped). |
+| `file_info` | Files | Sensitive | Metadata: size, mode, mod time. |
+| `move_file` | Files | Dangerous | Rename/move with cross-device copy+remove fallback. |
+| `delete_file` | Files | Dangerous | Delete file/dir; refuses sandbox roots. |
+| `long_press` | UI | Dangerous | Long-press at coordinates (duration clamped 100–10000 ms). |
+| `click_by_text` | UI | Dangerous | Find UI node by text and tap its center. |
 
 ## ⚡ Installation
 
@@ -337,7 +351,7 @@ flowchart TD
     C --> F["MCP Server"]
     E --> F
     F --> G["Tool Registry<br/>tiers + allow / deny"]
-    G --> H["Device & System"]
+    G --> H["Device & System<br/>+ Location"]
     G --> I["Communication & Media"]
     G --> J["Files & UI Automation"]
     G --> K["Shell & Background Tasks"]
