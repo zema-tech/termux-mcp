@@ -5,6 +5,8 @@ package ui
 
 import (
 	"context"
+	"encoding/xml"
+	"fmt"
 	"math"
 	"os"
 	"strings"
@@ -47,6 +49,22 @@ func All(k *kit.Kit) []registry.Tool {
 			mcp.WithNumber("y2", mcp.Required(), mcp.Description("End Y"), mcp.Min(0)),
 			mcp.WithNumber("duration", mcp.Description("Duration in ms (default 300)"), mcp.Min(0))),
 			Handler: swipeScreen(k),
+			Meta:    registry.Meta{Module: "ui", Tier: registry.TierDangerous}},
+
+		{Def: mcp.NewTool("long_press",
+			mcp.WithDescription("Long-press at screen coordinates via input swipe (same point, held duration)."),
+			mcp.WithNumber("x", mcp.Required(), mcp.Description("X in pixels"), mcp.Min(0)),
+			mcp.WithNumber("y", mcp.Required(), mcp.Description("Y in pixels"), mcp.Min(0)),
+			mcp.WithNumber("duration", mcp.Description("Hold duration in ms (default 800, clamped 100-10000)"), mcp.Min(0))),
+			Handler: longPress(k),
+			Meta:    registry.Meta{Module: "ui", Tier: registry.TierDangerous}},
+
+		{Def: mcp.NewTool("click_by_text",
+			mcp.WithDescription("Find a UI node by text via uiautomator dump and tap its center."),
+			mcp.WithString("text", mcp.Required(), mcp.Description("Text to match")),
+			mcp.WithBoolean("exact", mcp.Description("Require exact match (default false = substring, case-insensitive)")),
+			mcp.WithString("output", mcp.Description("Where uiautomator writes the dump (default /sdcard/window_dump.xml)"))),
+			Handler: clickByText(k),
 			Meta:    registry.Meta{Module: "ui", Tier: registry.TierDangerous}},
 
 		{Def: mcp.NewTool("input_text",
@@ -157,6 +175,127 @@ func swipeScreen(k *kit.Kit) server.ToolHandlerFunc {
 			args = append(args, itoa(d))
 		}
 		return inputRun(k, ctx, args)
+	}
+}
+
+func longPress(k *kit.Kit) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		x := itoa(int(math.Round(kit.NumArg(req, "x"))))
+		y := itoa(int(math.Round(kit.NumArg(req, "y"))))
+		d, ok := kit.Args(req)["duration"]
+		ms := 800
+		if ok {
+			if f, isNum := d.(float64); isNum {
+				ms = int(math.Round(f))
+			}
+		}
+		if ms < 100 {
+			ms = 100
+		}
+		if ms > 10000 {
+			ms = 10000
+		}
+		return inputRun(k, ctx, []string{"swipe", x, y, x, y, itoa(ms)})
+	}
+}
+
+// uiNode is the subset of a uiautomator node we need to locate text.
+type uiNode struct {
+	Text   string   `xml:"text,attr"`
+	Bounds string   `xml:"bounds,attr"`
+	Nodes  []uiNode `xml:"node"`
+}
+
+func collectNodes(n uiNode, out *[]uiNode) {
+	*out = append(*out, n)
+	for _, c := range n.Nodes {
+		collectNodes(c, out)
+	}
+}
+
+func clickByText(k *kit.Kit) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		text, err := kit.RequireStr(req, "text")
+		if err != nil {
+			return kit.ResultError("%v", err), nil
+		}
+		exact := false
+		if _, ok := kit.Args(req)["exact"]; ok {
+			exact = kit.BoolArg(req, "exact")
+		}
+		out := kit.StrArg(req, "output")
+		if out == "" {
+			out = "/sdcard/window_dump.xml"
+		}
+
+		res, err := k.Run(ctx, "uiautomator", []string{"dump", out}, 0)
+		if err != nil {
+			return kit.ResultError("%v (install android-tools)", err), nil
+		}
+		if res.ExitCode != 0 {
+			return kit.ResultError("uiautomator exited %d: %s", res.ExitCode, strings.TrimSpace(res.Stderr)), nil
+		}
+
+		data, err := os.ReadFile(out)
+		if err != nil {
+			return kit.ResultError("read dump: %v", err), nil
+		}
+
+		var root struct {
+			Nodes []uiNode `xml:"node"`
+		}
+		if err := xml.Unmarshal(data, &root); err != nil {
+			return kit.ResultError("parse dump: %v", err), nil
+		}
+
+		var nodes []uiNode
+		for _, n := range root.Nodes {
+			collectNodes(n, &nodes)
+		}
+
+		needle := strings.ToLower(text)
+		var match *uiNode
+		matches := 0
+		for i := range nodes {
+			nt := nodes[i].Text
+			if nt == "" {
+				continue
+			}
+			hit := nt == text
+			if !exact {
+				hit = strings.Contains(strings.ToLower(nt), needle)
+			}
+			if hit {
+				matches++
+				if match == nil {
+					match = &nodes[i]
+				}
+			}
+		}
+		if match == nil {
+			return kit.ResultError("no node with text %q found in %s", text, out), nil
+		}
+
+		var x1, y1, x2, y2 int
+		if _, err := fmt.Sscanf(match.Bounds, "[%d,%d][%d,%d]", &x1, &y1, &x2, &y2); err != nil {
+			return kit.ResultError("invalid bounds %q: %v", match.Bounds, err), nil
+		}
+		cx := (x1 + x2) / 2
+		cy := (y1 + y2) / 2
+
+		tres, terr := k.Run(ctx, "input", []string{"tap", itoa(cx), itoa(cy)}, 0)
+		if terr != nil {
+			return kit.ResultError("%v (install android-tools and enable wireless debugging)", terr), nil
+		}
+		if tres.ExitCode != 0 {
+			return kit.ResultError("input exited %d: %s", tres.ExitCode, strings.TrimSpace(tres.Stderr)), nil
+		}
+		return kit.ResultJSON(map[string]any{
+			"text":    match.Text,
+			"x":       cx,
+			"y":       cy,
+			"matches": matches,
+		}), nil
 	}
 }
 
