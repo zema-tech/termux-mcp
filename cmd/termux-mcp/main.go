@@ -283,10 +283,13 @@ func runTunnel(provider, cfgPath string) {
 	// A tunnel exposes the device to the public internet, and tunnel traffic
 	// arrives from the local cloudflared proxy (127.0.0.1), which the auth
 	// middleware treats as loopback. Loopback is only exempt when
-	// auth.require is false — so a tunnel MUST have the token enforced.
-	if cfg.Auth.Token == "" || !cfg.Auth.Require {
+	// auth.require is false — so a tunnel MUST have the token enforced,
+	// or OAuth enabled so clients complete the authorization flow.
+	hasStatic := cfg.Auth.Token != "" && cfg.Auth.Require
+	hasOAuth := cfg.Auth.OAuth
+	if !hasStatic && !hasOAuth {
 		log.Fatalf("refusing to start a tunnel without enforced auth: " +
-			"set auth.require: true and auth.token in the config " +
+			"set auth.require: true and auth.token, or auth.oauth: true " +
 			"(generate a token with: termux-mcp token new --write)")
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -305,28 +308,50 @@ func newToken() string {
 	return hex.EncodeToString(b)
 }
 
-// persistToken sets auth.token in the YAML config file, preserving the rest.
+// persistToken sets auth.token in the YAML config file, preserving the rest
+// of its contents. With no explicit path it targets the same conventional
+// location config.Load would read from (config.DefaultPath), and it creates
+// that file (and its parent directory) from scratch when it doesn't exist
+// yet — matching the documented standalone command
+// "termux-mcp token new --write", which previously failed outright in both
+// of these cases ("no config file given" with no --config/env, or a read
+// error on a fresh install with no config.yaml yet).
 func persistToken(cfgPath string, token string) error {
 	if cfgPath == "" {
-		return fmt.Errorf("no config file given (use --config or TERMUX_MCP_CONFIG)")
+		cfgPath = config.DefaultPath()
 	}
-	data, err := os.ReadFile(cfgPath)
-	if err != nil {
-		return err
-	}
+
 	var m map[string]any
-	if err := yaml.Unmarshal(data, &m); err != nil {
+	data, err := os.ReadFile(cfgPath)
+	switch {
+	case err == nil:
+		if err := yaml.Unmarshal(data, &m); err != nil {
+			return fmt.Errorf("parse config %s: %w", cfgPath, err)
+		}
+	case os.IsNotExist(err):
+		// Fresh install: start from an empty document rather than failing.
+	default:
 		return err
 	}
+	if m == nil {
+		m = map[string]any{}
+	}
+
 	authMap, _ := m["auth"].(map[string]any)
 	if authMap == nil {
 		authMap = map[string]any{}
 	}
 	authMap["token"] = token
 	m["auth"] = authMap
+
 	out, err := yaml.Marshal(m)
 	if err != nil {
 		return err
+	}
+	if dir := filepath.Dir(cfgPath); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return fmt.Errorf("create config dir %s: %w", dir, err)
+		}
 	}
 	return os.WriteFile(cfgPath, out, 0o600)
 }

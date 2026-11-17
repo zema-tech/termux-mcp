@@ -30,17 +30,21 @@ Client config (`claude_desktop_config.json` / MCP settings):
 ## 2. Remote via cloudflared
 
 ```bash
-# The tunnel exposes the device publicly, so auth MUST be enforced:
-# set auth.require: true (and auth.token) in the config first.
-termux-mcp serve http &                    # loopback is enough
+# Enforce auth (static token and/or OAuth):
+# auth.require: true
+# auth.token: <from termux-mcp token new --write>
+# auth.oauth: true   # default
+termux-mcp serve http &
 termux-mcp tunnel start                    # prints https://xxx.trycloudflare.com
 ```
 
-`termux-mcp tunnel start` refuses to run unless `auth.token` is set **and**
-`auth.require: true` — tunnel traffic arrives from the local cloudflared
-proxy (loopback), so without `require: true` the token would not be checked.
+`termux-mcp tunnel start` refuses to run unless either:
+- `auth.token` is set **and** `auth.require: true`, or
+- `auth.oauth: true` (clients complete OAuth on the public URL).
 
-Client config:
+Tunnel traffic arrives from the local cloudflared proxy (loopback).
+
+### Static Bearer clients
 
 ```json
 {
@@ -53,9 +57,25 @@ Client config:
 }
 ```
 
-Any non-loopback bind **requires** `auth.token`; the server refuses to start
-without one. With `auth.require: false` (the default), on-device/loopback
-clients skip the token — set `auth.require: true` when serving remotely.
+### OAuth 2.1 clients (Grok custom connector, Claude, Composio)
+
+Point the connector at:
+
+```
+https://xxx.trycloudflare.com/mcp
+```
+
+The client will:
+
+1. Discover `/.well-known/oauth-protected-resource`
+2. Read AS metadata from `/.well-known/oauth-authorization-server`
+3. Register via `POST /oauth/register`
+4. Open `/oauth/authorize` → **Approve** on the tablet consent page
+5. Exchange the code at `/oauth/token` (PKCE S256)
+6. Call `/mcp` with `Authorization: Bearer <access_token>`
+
+Optional: set `auth.public_base: "https://xxx.trycloudflare.com"` so metadata
+URLs stay stable even if Host headers vary.
 
 ## 3. Hosts that only support stdio
 

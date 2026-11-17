@@ -5,7 +5,7 @@
 server:
   # stdio (local) or http (LAN/remote via tunnel)
   mode: stdio
-  # bind address for http mode. Non-loopback binds REQUIRE auth.token.
+  # bind address for http mode. Non-loopback binds REQUIRE auth.token or oauth.
   bind: 127.0.0.1
   port: 3000
   max_body_bytes: 1048576   # 1 MiB request cap
@@ -16,6 +16,12 @@ auth:
   token: ""
   # true = require the token even on loopback (recommended when remote)
   require: false
+  # OAuth 2.1 + PKCE (S256) for Grok / Claude / Composio custom connectors.
+  # Default true. Clients discover endpoints via /.well-known/oauth-*.
+  oauth: true
+  # Optional fixed public URL (e.g. https://xxx.trycloudflare.com).
+  # If empty, inferred from Host / X-Forwarded-* headers.
+  public_base: ""
 
 tools:
   # opt-in tiers: dangerous and sensitive tools are OFF by default

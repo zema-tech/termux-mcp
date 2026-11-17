@@ -32,8 +32,10 @@ type ServerConfig struct {
 }
 
 type AuthConfig struct {
-	Token   string `yaml:"token"`
-	Require bool   `yaml:"require"` // enforce token even on loopback
+	Token      string `yaml:"token"`
+	Require    bool   `yaml:"require"`     // enforce token even on loopback
+	OAuth      bool   `yaml:"oauth"`       // enable OAuth 2.1 + PKCE endpoints
+	PublicBase string `yaml:"public_base"` // e.g. https://xxx.trycloudflare.com
 }
 
 type ToolsConfig struct {
@@ -71,6 +73,7 @@ func Default() *Config {
 	c.Server.Port = 3000
 	c.Server.MaxBodyBytes = 1 << 20 // 1 MiB
 	c.Server.MaxSessions = 32
+	c.Auth.OAuth = true // enable by default for HTTP clients that require OAuth
 	c.Exec.DefaultTimeoutSeconds = 30
 	c.Exec.MaxOutputBytes = 1 << 20  // 1 MiB
 	c.Exec.MaxTaskLogBytes = 8 << 20 // 8 MiB per stream
@@ -127,6 +130,22 @@ func Load(path string) (*Config, error) {
 	return c, nil
 }
 
+// DefaultPath returns the conventional config file location for this
+// environment, without requiring that a file already exist there (unlike
+// discover, which backs Load and only ever returns a path it found on
+// disk). CLI commands that create or rewrite the config file (e.g.
+// "token new --write" with no --config flag) use this so they target the
+// same location Load would read from on a fresh install.
+func DefaultPath() string {
+	if p := os.Getenv("TERMUX_MCP_CONFIG"); p != "" {
+		return p
+	}
+	if p := os.Getenv("PREFIX"); p != "" {
+		return filepath.Join(p, "var", "lib", "termux-mcp", "config.yaml")
+	}
+	return "config.yaml"
+}
+
 // discover locates a config.yaml in the documented default locations.
 // It returns "" when none exists (pure defaults + env then apply).
 func discover() string {
@@ -153,6 +172,8 @@ func fileExists(p string) bool {
 func applyEnv(c *Config) {
 	setStr(&c.Auth.Token, os.Getenv("TERMUX_MCP_AUTH_TOKEN"))
 	setBool(&c.Auth.Require, os.Getenv("TERMUX_MCP_AUTH_REQUIRE"))
+	setBool(&c.Auth.OAuth, os.Getenv("TERMUX_MCP_AUTH_OAUTH"))
+	setStr(&c.Auth.PublicBase, os.Getenv("TERMUX_MCP_AUTH_PUBLIC_BASE"))
 	setStr(&c.Server.Mode, os.Getenv("TERMUX_MCP_SERVER_MODE"))
 	setStr(&c.Server.Bind, os.Getenv("TERMUX_MCP_SERVER_BIND"))
 	setInt(&c.Server.Port, os.Getenv("TERMUX_MCP_SERVER_PORT"))
@@ -245,9 +266,10 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("exec.max_task_log_bytes must be > 0")
 	}
 
-	// Refuse to expose the device without a token on non-loopback binds.
-	if c.Server.Mode == "http" && c.IsNonLoopback() && !c.Auth.Require && c.Auth.Token == "" {
-		return fmt.Errorf("refusing to bind %s without auth.token: set TERMUX_MCP_AUTH_TOKEN", c.HTTPAddr())
+	// Refuse to expose the device without a token on non-loopback binds
+	// unless OAuth is enabled (clients can complete the OAuth flow).
+	if c.Server.Mode == "http" && c.IsNonLoopback() && !c.Auth.Require && c.Auth.Token == "" && !c.Auth.OAuth {
+		return fmt.Errorf("refusing to bind %s without auth.token or auth.oauth: set TERMUX_MCP_AUTH_TOKEN or auth.oauth: true", c.HTTPAddr())
 	}
 
 	// Shell tool is allowlist-only: enabling it requires at least one pattern.
@@ -264,9 +286,17 @@ func (c *Config) HTTPAddr() string {
 }
 
 // IsNonLoopback reports whether the configured bind address is not loopback.
+// It parses the address as an IP so the whole 127.0.0.0/8 range and ::1 are
+// treated as loopback, matching auth.isLoopback. Unparseable hosts fail closed.
 func (c *Config) IsNonLoopback() bool {
 	h := c.Server.Bind
-	return h != "" && h != "127.0.0.1" && h != "::1" && h != "localhost"
+	if h == "" || h == "localhost" {
+		return false
+	}
+	if ip := net.ParseIP(h); ip != nil {
+		return !ip.IsLoopback()
+	}
+	return true
 }
 
 // Sanitized returns a copy with secrets removed, safe for logging/status.
