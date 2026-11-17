@@ -99,6 +99,13 @@ func All(k *kit.Kit) []registry.Tool {
 			mcp.WithNumber("duration", mcp.Description("Seconds to sample, 1-10 (default 1)"), mcp.Min(1), mcp.Max(10))),
 			Handler: readSensor(k),
 			Meta:    registry.Meta{Module: "device", Tier: registry.TierSafe}},
+
+		{Def: mcp.NewTool("get_location",
+			mcp.WithDescription("Get the device location via termux-location."),
+			mcp.WithString("provider", mcp.Description("gps, network or passive (default gps)")),
+			mcp.WithString("request", mcp.Description("once or last (default once)"))),
+			Handler: getLocation(k),
+			Meta:    registry.Meta{Module: "device", Tier: registry.TierSafe}},
 	}
 }
 
@@ -256,6 +263,38 @@ func readSensor(k *kit.Kit) server.ToolHandlerFunc {
 		}
 		if v == nil {
 			return kit.ResultError("termux-sensor produced no valid JSON samples"), nil
+		}
+		return kit.ResultJSON(v), nil
+	}
+}
+
+func getLocation(k *kit.Kit) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		provider := kit.StrArg(req, "provider")
+		if provider == "" {
+			provider = "gps"
+		}
+		switch provider {
+		case "gps", "network", "passive":
+		default:
+			return kit.ResultError("invalid provider %q: want gps, network or passive", provider), nil
+		}
+		request := kit.StrArg(req, "request")
+		if request == "" {
+			request = "once"
+		}
+		switch request {
+		case "once", "last":
+		default:
+			return kit.ResultError("invalid request %q: want once or last", request), nil
+		}
+		raw, err := k.RunJSON(ctx, "termux-location", []string{"-p", provider, "-r", request}, 0, true)
+		if err != nil {
+			return kit.ResultError("%v", err), nil
+		}
+		var v map[string]any
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return kit.ResultError("%v", err), nil
 		}
 		return kit.ResultJSON(v), nil
 	}
