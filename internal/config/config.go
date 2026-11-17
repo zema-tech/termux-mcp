@@ -33,8 +33,8 @@ type ServerConfig struct {
 
 type AuthConfig struct {
 	Token      string `yaml:"token"`
-	Require    bool   `yaml:"require"` // enforce token even on loopback
-	OAuth      bool   `yaml:"oauth"`   // enable OAuth 2.1 + PKCE endpoints
+	Require    bool   `yaml:"require"`     // enforce token even on loopback
+	OAuth      bool   `yaml:"oauth"`       // enable OAuth 2.1 + PKCE endpoints
 	PublicBase string `yaml:"public_base"` // e.g. https://xxx.trycloudflare.com
 }
 

@@ -58,7 +58,7 @@ func All(k *kit.Kit) []registry.Tool {
 
 		{Def: mcp.NewTool("speech_to_text",
 			mcp.WithDescription("Transcribe speech from the microphone via termux-speech-to-text."),
-			mcp.WithString("lang", mcp.Description("Language code, e.g. en-US")),
+			mcp.WithString("lang", mcp.Description("Language code, e.g. en-US"))),
 			Handler: speechToText(k),
 			Meta:    registry.Meta{Module: "media", Tier: registry.TierSensitive}},
 	}
