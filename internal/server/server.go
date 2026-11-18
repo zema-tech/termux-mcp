@@ -70,6 +70,7 @@ func RunHTTP(s *mcpgo.MCPServer, cfg *config.Config, mgr *tasks.Manager) error {
 	var oauthSrv *oauth.Server
 	if cfg.Auth.OAuth {
 		oauthSrv = oauth.New(cfg.Auth.PublicBase)
+		oauthSrv.SetStaticBearer(cfg.Auth.Token)
 	}
 
 	mux := http.NewServeMux()
