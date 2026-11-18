@@ -311,6 +311,7 @@ func (s *Server) authorizeGET(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, consentHTML,
 		html.EscapeString(name),
+		html.EscapeString(name),
 		html.EscapeString(clientID),
 		html.EscapeString(redirectURI),
 		html.EscapeString(state),
@@ -457,14 +458,7 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleConsentPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, `<!DOCTYPE html><html><head><meta charset="utf-8"><title>termux-mcp OAuth</title>
-<style>body{font-family:system-ui;max-width:40rem;margin:2rem auto;padding:0 1rem;background:#0f1115;color:#e8eaed}
-a{color:#8ab4f8}</style></head><body>
-<h1>termux-mcp OAuth</h1>
-<p>This device is ready for OAuth 2.1 + PKCE clients (Grok, Claude, Composio, …).</p>
-<p>Clients discover endpoints via <code>/.well-known/oauth-protected-resource</code>.</p>
-<p>Static Bearer tokens from <code>auth.token</code> still work.</p>
-</body></html>`)
+	fmt.Fprint(w, landingHTML)
 }
 
 // WWWAuthenticate returns the header value clients use to discover the AS.
@@ -515,36 +509,180 @@ func verifyPKCE(verifier, challenge, method string) bool {
 	return false
 }
 
+// consentHTML is the authorization consent page shown on GET /oauth/authorize.
+// Args: clientName (title), clientName (body), client_id, redirect_uri, state,
+// code_challenge, code_challenge_method, scope.
 const consentHTML = `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Authorize termux-mcp</title>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>Authorize · termux-mcp</title>
 <style>
-body{font-family:system-ui,-apple-system,sans-serif;max-width:28rem;margin:3rem auto;padding:0 1.25rem;background:#0f1115;color:#e8eaed}
-.card{background:#1a1d24;border-radius:12px;padding:1.5rem;border:1px solid #2a2f3a}
-h1{font-size:1.25rem;margin:0 0 .5rem}
-p{color:#9aa0a6;line-height:1.5}
-.client{color:#8ab4f8;font-weight:600}
-.actions{display:flex;gap:.75rem;margin-top:1.5rem}
-button{flex:1;padding:.75rem 1rem;border:none;border-radius:8px;font-size:1rem;cursor:pointer;font-weight:600}
-.approve{background:#1a73e8;color:#fff}
-.deny{background:#3c4043;color:#e8eaed}
+:root{
+  --bg:#0b0d12;
+  --card:#141820;
+  --card-border:#242a36;
+  --text:#eef0f4;
+  --muted:#9aa3b2;
+  --accent:#4c8dff;
+  --accent-2:#6ee7b7;
+  --danger:#3a3f4a;
+  --radius:18px;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  background:
+    radial-gradient(1200px 600px at 10% -10%, rgba(76,141,255,.18), transparent 55%),
+    radial-gradient(900px 500px at 100% 0%, rgba(110,231,183,.10), transparent 50%),
+    var(--bg);
+  color:var(--text);
+  display:flex;align-items:center;justify-content:center;
+  padding:max(1.25rem, env(safe-area-inset-top)) 1.25rem max(1.25rem, env(safe-area-inset-bottom));
+  min-height:100%;
+}
+.shell{width:100%;max-width:26rem}
+.brand{
+  display:flex;align-items:center;gap:.65rem;justify-content:center;
+  margin-bottom:1.25rem;color:var(--muted);font-size:.85rem;letter-spacing:.02em
+}
+.logo{
+  width:2rem;height:2rem;border-radius:10px;
+  background:linear-gradient(145deg,#4c8dff,#6ee7b7);
+  display:grid;place-items:center;color:#0b0d12;font-weight:800;font-size:1rem;
+  box-shadow:0 8px 24px rgba(76,141,255,.25)
+}
+.card{
+  background:linear-gradient(180deg, rgba(255,255,255,.03), transparent 40%), var(--card);
+  border:1px solid var(--card-border);
+  border-radius:var(--radius);
+  padding:1.5rem 1.4rem 1.35rem;
+  box-shadow:0 20px 50px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.04)
+}
+.badge{
+  display:inline-flex;align-items:center;gap:.35rem;
+  font-size:.72rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase;
+  color:var(--accent-2);background:rgba(110,231,183,.1);
+  border:1px solid rgba(110,231,183,.25);border-radius:999px;
+  padding:.28rem .65rem;margin-bottom:1rem
+}
+h1{font-size:1.35rem;line-height:1.25;margin:0 0 .75rem;font-weight:700;letter-spacing:-.02em}
+.lead{margin:0 0 1.15rem;color:var(--muted);line-height:1.55;font-size:.95rem}
+.client{
+  color:var(--text);font-weight:650;
+  background:linear-gradient(90deg,#8ab4f8,#6ee7b7);
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent
+}
+.scopes{
+  list-style:none;margin:0 0 1.35rem;padding:0;
+  display:grid;gap:.55rem
+}
+.scopes li{
+  display:flex;align-items:flex-start;gap:.7rem;
+  background:rgba(255,255,255,.03);border:1px solid var(--card-border);
+  border-radius:12px;padding:.7rem .8rem;font-size:.88rem;line-height:1.4
+}
+.scopes .ico{
+  flex:0 0 auto;width:1.55rem;height:1.55rem;border-radius:8px;
+  display:grid;place-items:center;font-size:.85rem;
+  background:rgba(76,141,255,.12);color:var(--accent)
+}
+.scopes strong{display:block;font-weight:600;color:var(--text);margin-bottom:.1rem}
+.scopes span{color:var(--muted);font-size:.8rem}
+.note{
+  margin:0 0 1.25rem;font-size:.78rem;color:var(--muted);line-height:1.45;
+  padding:.65rem .75rem;border-radius:10px;background:rgba(255,255,255,.025);
+  border:1px dashed var(--card-border)
+}
+.actions{display:flex;gap:.65rem}
+button{
+  flex:1;padding:.85rem 1rem;border:none;border-radius:12px;
+  font-size:.95rem;font-weight:650;cursor:pointer;
+  transition:transform .12s ease, filter .12s ease, background .12s ease;
+  -webkit-tap-highlight-color:transparent
+}
+button:active{transform:scale(.98)}
+.approve{
+  background:linear-gradient(180deg,#5b97ff,#3b7aef);color:#fff;
+  box-shadow:0 8px 20px rgba(59,122,239,.35)
+}
+.approve:hover{filter:brightness(1.05)}
+.deny{background:var(--danger);color:var(--text);border:1px solid #4a5160}
+.deny:hover{background:#454b57}
+.foot{margin-top:1rem;text-align:center;font-size:.72rem;color:#6b7280}
+</style>
+</head><body>
+<div class="shell">
+  <div class="brand">
+    <div class="logo" aria-hidden="true">⌁</div>
+    <span>termux-mcp</span>
+  </div>
+  <div class="card">
+    <div class="badge">OAuth 2.1 · PKCE</div>
+    <h1>Authorize access</h1>
+    <p class="lead"><span class="client">%s</span> wants to use tools on this Android device through <strong>termux-mcp</strong>.</p>
+    <ul class="scopes">
+      <li>
+        <span class="ico" aria-hidden="true">📱</span>
+        <div><strong>Device tools</strong><span>Battery, sensors, location, clipboard, and system info</span></div>
+      </li>
+      <li>
+        <span class="ico" aria-hidden="true">📁</span>
+        <div><strong>Files</strong><span>Sandboxed file access — only if enabled in config</span></div>
+      </li>
+      <li>
+        <span class="ico" aria-hidden="true">⌨</span>
+        <div><strong>Shell</strong><span>Command execution — only if allowlisted in config</span></div>
+      </li>
+    </ul>
+    <p class="note">Access follows your termux-mcp configuration. Sensitive and dangerous modules stay off unless you enabled them.</p>
+    <form method="POST" action="/oauth/authorize">
+      <input type="hidden" name="client_id" value="%s">
+      <input type="hidden" name="redirect_uri" value="%s">
+      <input type="hidden" name="state" value="%s">
+      <input type="hidden" name="code_challenge" value="%s">
+      <input type="hidden" name="code_challenge_method" value="%s">
+      <input type="hidden" name="scope" value="%s">
+      <div class="actions">
+        <button class="deny" type="submit" name="decision" value="deny">Deny</button>
+        <button class="approve" type="submit" name="decision" value="approve">Approve</button>
+      </div>
+    </form>
+  </div>
+  <p class="foot">Request from %s · token expires in 24h</p>
+</div>
+</body></html>
+`
+
+const landingHTML = `<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>termux-mcp · OAuth</title>
+<style>
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+font-family:ui-sans-serif,system-ui,sans-serif;background:#0b0d12;color:#eef0f4;
+padding:1.5rem;
+background-image:radial-gradient(800px 400px at 20% 0%,rgba(76,141,255,.15),transparent 55%)}
+.card{max-width:26rem;background:#141820;border:1px solid #242a36;border-radius:18px;padding:1.5rem;
+box-shadow:0 20px 50px rgba(0,0,0,.4)}
+h1{font-size:1.25rem;margin:0 0 .75rem}
+p{color:#9aa3b2;line-height:1.55;margin:0 0 .75rem}
+code{color:#8ab4f8;font-size:.9em}
+a{color:#4c8dff}
+.logo{width:2.25rem;height:2.25rem;border-radius:10px;margin-bottom:1rem;
+background:linear-gradient(145deg,#4c8dff,#6ee7b7);display:grid;place-items:center;
+color:#0b0d12;font-weight:800}
 </style></head><body>
 <div class="card">
-<h1>Authorize access</h1>
-<p><span class="client">%s</span> wants to use tools on this Android device via termux-mcp.</p>
-<p>Scope: <code>mcp</code> — device tools, files (if enabled), shell (if enabled).</p>
-<form method="POST" action="/oauth/authorize">
-<input type="hidden" name="client_id" value="%s">
-<input type="hidden" name="redirect_uri" value="%s">
-<input type="hidden" name="state" value="%s">
-<input type="hidden" name="code_challenge" value="%s">
-<input type="hidden" name="code_challenge_method" value="%s">
-<input type="hidden" name="scope" value="%s">
-<div class="actions">
-<button class="deny" type="submit" name="decision" value="deny">Deny</button>
-<button class="approve" type="submit" name="decision" value="approve">Approve</button>
-</div>
-</form>
+<div class="logo" aria-hidden="true">⌁</div>
+<h1>termux-mcp OAuth</h1>
+<p>This device is ready for OAuth 2.1 + PKCE clients (Grok, Claude, Composio, …).</p>
+<p>Clients discover endpoints via <code>/.well-known/oauth-protected-resource</code>.</p>
+<p>Static Bearer tokens from <code>auth.token</code> still work alongside OAuth access tokens.</p>
 </div>
 </body></html>
 `
