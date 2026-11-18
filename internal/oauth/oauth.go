@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"embed"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -22,34 +23,35 @@ import (
 	"time"
 )
 
-const (
-	codeTTL  = 10 * time.Minute
-	tokenTTL = 24 * time.Hour
+//go:embed consent.html
+var consentHTML string
 
-	// maxRegisteredClients caps dynamic client registrations to bound memory.
-	maxRegisteredClients = 256
+//go:embed landing.html
+var landingHTML string
+
+const (
+	codeTTL                = 10 * time.Minute
+	tokenTTL               = 24 * time.Hour
+	maxRegisteredClients  = 256
 )
 
 // Server is an in-process OAuth 2.1 AS + resource server helper.
 type Server struct {
-	mu      sync.RWMutex
-	clients map[string]*client
-	codes   map[string]*authCode
-	tokens  map[string]*accessToken
-
-	// PublicBase is the externally reachable base URL (e.g. tunnel URL).
-	// If empty, it is inferred from each request's Host header.
-	PublicBase string
-
-	// ResourcePath is the MCP endpoint path, default "/mcp".
+	mu           sync.RWMutex
+	clients      map[string]*client
+	codes        map[string]*authCode
+	tokens       map[string]*accessToken
+	PublicBase   string
 	ResourcePath string
+	StaticBearer string
 }
 
 type client struct {
 	ID           string
-	Secret       string // empty for public clients
+	Secret       string
 	RedirectURIs []string
 	Name         string
+	LogoURI      string
 	Created      time.Time
 }
 
@@ -85,8 +87,13 @@ func New(publicBase string) *Server {
 	return s
 }
 
-// janitor periodically removes expired authorization codes and access tokens
-// so the in-memory stores do not grow without bound.
+// SetStaticBearer configures the optional static token accepted on consent.
+func (s *Server) SetStaticBearer(token string) {
+	s.mu.Lock()
+	s.StaticBearer = token
+	s.mu.Unlock()
+}
+
 func (s *Server) janitor() {
 	t := time.NewTicker(5 * time.Minute)
 	defer t.Stop()
@@ -138,8 +145,6 @@ func (s *Server) ValidAccessToken(token string) bool {
 	at, ok := s.tokens[token]
 	return ok && time.Now().Before(at.Expires)
 }
-
-// --- HTTP handlers ---
 
 // Mount registers all OAuth routes on mux.
 func (s *Server) Mount(mux *http.ServeMux) {
@@ -200,6 +205,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		RedirectURIs []string `json:"redirect_uris"`
 		ClientName   string   `json:"client_name"`
+		LogoURI      string   `json:"logo_uri"`
 		TokenAuth    string   `json:"token_endpoint_auth_method"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -216,28 +222,30 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if req.LogoURI != "" {
+		if u, err := url.ParseRequestURI(req.LogoURI); err != nil || (u.Scheme != "https" && u.Scheme != "http") {
+			http.Error(w, `{"error":"invalid_logo_uri"}`, http.StatusBadRequest)
+			return
+		}
+	}
 	id := randomToken(16)
 	secret := ""
 	if req.TokenAuth == "client_secret_post" || req.TokenAuth == "client_secret_basic" {
 		secret = randomToken(24)
 	}
 	c := &client{
-		ID:           id,
-		Secret:       secret,
-		RedirectURIs: req.RedirectURIs,
-		Name:         req.ClientName,
-		Created:      time.Now(),
+		ID: id, Secret: secret, RedirectURIs: req.RedirectURIs,
+		Name: req.ClientName, LogoURI: req.LogoURI, Created: time.Now(),
 	}
 	s.mu.Lock()
 	s.clients[id] = c
 	s.mu.Unlock()
 
 	resp := map[string]any{
-		"client_id":                  id,
-		"client_id_issued_at":        c.Created.Unix(),
-		"redirect_uris":              c.RedirectURIs,
-		"grant_types":                []string{"authorization_code"},
-		"response_types":             []string{"code"},
+		"client_id": id, "client_id_issued_at": c.Created.Unix(),
+		"redirect_uris": c.RedirectURIs,
+		"grant_types": []string{"authorization_code"},
+		"response_types": []string{"code"},
 		"token_endpoint_auth_method": "none",
 	}
 	if secret != "" {
@@ -246,6 +254,9 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ClientName != "" {
 		resp["client_name"] = req.ClientName
+	}
+	if req.LogoURI != "" {
+		resp["logo_uri"] = req.LogoURI
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -275,7 +286,6 @@ func (s *Server) authorizeGET(w http.ResponseWriter, r *http.Request) {
 	if scope == "" {
 		scope = "mcp"
 	}
-
 	if respType != "code" {
 		http.Error(w, "unsupported response_type", http.StatusBadRequest)
 		return
@@ -291,7 +301,6 @@ func (s *Server) authorizeGET(w http.ResponseWriter, r *http.Request) {
 	if method == "" {
 		method = "S256"
 	}
-
 	s.mu.RLock()
 	c, ok := s.clients[clientID]
 	s.mu.RUnlock()
@@ -303,13 +312,19 @@ func (s *Server) authorizeGET(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid redirect_uri", http.StatusBadRequest)
 		return
 	}
-
 	name := c.Name
 	if name == "" {
 		name = clientID
 	}
+	initial := strings.ToUpper(string([]rune(name)[0]))
+	logoBlock := fmt.Sprintf(`<div class="app-avatar" aria-hidden="true">%s</div>`, html.EscapeString(initial))
+	if c.LogoURI != "" {
+		logoBlock = fmt.Sprintf(`<img class="app-logo" src="%s" alt="" width="56" height="56" referrerpolicy="no-referrer">`, html.EscapeString(c.LogoURI))
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, consentHTML,
+		logoBlock,
+		html.EscapeString(name),
 		html.EscapeString(name),
 		html.EscapeString(clientID),
 		html.EscapeString(redirectURI),
@@ -317,6 +332,7 @@ func (s *Server) authorizeGET(w http.ResponseWriter, r *http.Request) {
 		html.EscapeString(challenge),
 		html.EscapeString(method),
 		html.EscapeString(scope),
+		html.EscapeString(name),
 	)
 }
 
@@ -343,7 +359,6 @@ func (s *Server) authorizePOST(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "access denied", http.StatusForbidden)
 		return
 	}
-
 	clientID := r.Form.Get("client_id")
 	redirectURI := r.Form.Get("redirect_uri")
 	state := r.Form.Get("state")
@@ -353,7 +368,19 @@ func (s *Server) authorizePOST(w http.ResponseWriter, r *http.Request) {
 	if scope == "" {
 		scope = "mcp"
 	}
-
+	if pasted := strings.TrimSpace(r.Form.Get("bearer_token")); pasted != "" {
+		s.mu.RLock()
+		static := s.StaticBearer
+		s.mu.RUnlock()
+		if static == "" {
+			http.Error(w, "static bearer not configured on server", http.StatusBadRequest)
+			return
+		}
+		if subtle.ConstantTimeCompare([]byte(pasted), []byte(static)) != 1 {
+			http.Error(w, "invalid bearer token", http.StatusUnauthorized)
+			return
+		}
+	}
 	s.mu.RLock()
 	c, ok := s.clients[clientID]
 	s.mu.RUnlock()
@@ -361,21 +388,15 @@ func (s *Server) authorizePOST(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid client or redirect", http.StatusBadRequest)
 		return
 	}
-
 	code := randomToken(24)
 	ac := &authCode{
-		Code:                code,
-		ClientID:            clientID,
-		RedirectURI:         redirectURI,
-		CodeChallenge:       challenge,
-		CodeChallengeMethod: method,
-		Scope:               scope,
-		Expires:             time.Now().Add(codeTTL),
+		Code: code, ClientID: clientID, RedirectURI: redirectURI,
+		CodeChallenge: challenge, CodeChallengeMethod: method,
+		Scope: scope, Expires: time.Now().Add(codeTTL),
 	}
 	s.mu.Lock()
 	s.codes[code] = ac
 	s.mu.Unlock()
-
 	u, err := url.Parse(redirectURI)
 	if err != nil {
 		http.Error(w, "bad redirect", http.StatusBadRequest)
@@ -403,7 +424,6 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 		writeOAuthError(w, "unsupported_grant_type", "only authorization_code", http.StatusBadRequest)
 		return
 	}
-
 	code := r.Form.Get("code")
 	redirectURI := r.Form.Get("redirect_uri")
 	clientID := r.Form.Get("client_id")
@@ -412,10 +432,8 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 		writeOAuthError(w, "invalid_request", "missing parameters", http.StatusBadRequest)
 		return
 	}
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
 	ac, ok := s.codes[code]
 	if !ok || ac.Used || time.Now().After(ac.Expires) {
 		writeOAuthError(w, "invalid_grant", "code invalid or expired", http.StatusBadRequest)
@@ -429,42 +447,27 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 		writeOAuthError(w, "invalid_grant", "pkce verification failed", http.StatusBadRequest)
 		return
 	}
-
 	if c, ok := s.clients[clientID]; ok && c.Secret != "" {
 		if subtle.ConstantTimeCompare([]byte(r.Form.Get("client_secret")), []byte(c.Secret)) != 1 {
 			writeOAuthError(w, "invalid_client", "bad client_secret", http.StatusUnauthorized)
 			return
 		}
 	}
-
 	ac.Used = true
 	tok := randomToken(32)
 	s.tokens[tok] = &accessToken{
-		Token:    tok,
-		ClientID: clientID,
-		Scope:    ac.Scope,
-		Expires:  time.Now().Add(tokenTTL),
-		Created:  time.Now(),
+		Token: tok, ClientID: clientID, Scope: ac.Scope,
+		Expires: time.Now().Add(tokenTTL), Created: time.Now(),
 	}
-
 	writeJSON(w, map[string]any{
-		"access_token": tok,
-		"token_type":   "Bearer",
-		"expires_in":   int(tokenTTL.Seconds()),
-		"scope":        ac.Scope,
+		"access_token": tok, "token_type": "Bearer",
+		"expires_in": int(tokenTTL.Seconds()), "scope": ac.Scope,
 	})
 }
 
 func (s *Server) handleConsentPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, `<!DOCTYPE html><html><head><meta charset="utf-8"><title>termux-mcp OAuth</title>
-<style>body{font-family:system-ui;max-width:40rem;margin:2rem auto;padding:0 1rem;background:#0f1115;color:#e8eaed}
-a{color:#8ab4f8}</style></head><body>
-<h1>termux-mcp OAuth</h1>
-<p>This device is ready for OAuth 2.1 + PKCE clients (Grok, Claude, Composio, …).</p>
-<p>Clients discover endpoints via <code>/.well-known/oauth-protected-resource</code>.</p>
-<p>Static Bearer tokens from <code>auth.token</code> still work.</p>
-</body></html>`)
+	fmt.Fprint(w, landingHTML)
 }
 
 // WWWAuthenticate returns the header value clients use to discover the AS.
@@ -472,8 +475,6 @@ func (s *Server) WWWAuthenticate(r *http.Request) string {
 	meta := s.baseURL(r) + "/.well-known/oauth-protected-resource"
 	return fmt.Sprintf(`Bearer realm="termux-mcp", resource_metadata="%s"`, meta)
 }
-
-// --- helpers ---
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -483,10 +484,7 @@ func writeJSON(w http.ResponseWriter, v any) {
 func writeOAuthError(w http.ResponseWriter, code, desc string, status int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]string{
-		"error":             code,
-		"error_description": desc,
-	})
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": code, "error_description": desc})
 }
 
 func randomToken(nBytes int) string {
@@ -514,37 +512,3 @@ func verifyPKCE(verifier, challenge, method string) bool {
 	}
 	return false
 }
-
-const consentHTML = `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Authorize termux-mcp</title>
-<style>
-body{font-family:system-ui,-apple-system,sans-serif;max-width:28rem;margin:3rem auto;padding:0 1.25rem;background:#0f1115;color:#e8eaed}
-.card{background:#1a1d24;border-radius:12px;padding:1.5rem;border:1px solid #2a2f3a}
-h1{font-size:1.25rem;margin:0 0 .5rem}
-p{color:#9aa0a6;line-height:1.5}
-.client{color:#8ab4f8;font-weight:600}
-.actions{display:flex;gap:.75rem;margin-top:1.5rem}
-button{flex:1;padding:.75rem 1rem;border:none;border-radius:8px;font-size:1rem;cursor:pointer;font-weight:600}
-.approve{background:#1a73e8;color:#fff}
-.deny{background:#3c4043;color:#e8eaed}
-</style></head><body>
-<div class="card">
-<h1>Authorize access</h1>
-<p><span class="client">%s</span> wants to use tools on this Android device via termux-mcp.</p>
-<p>Scope: <code>mcp</code> — device tools, files (if enabled), shell (if enabled).</p>
-<form method="POST" action="/oauth/authorize">
-<input type="hidden" name="client_id" value="%s">
-<input type="hidden" name="redirect_uri" value="%s">
-<input type="hidden" name="state" value="%s">
-<input type="hidden" name="code_challenge" value="%s">
-<input type="hidden" name="code_challenge_method" value="%s">
-<input type="hidden" name="scope" value="%s">
-<div class="actions">
-<button class="deny" type="submit" name="decision" value="deny">Deny</button>
-<button class="approve" type="submit" name="decision" value="approve">Approve</button>
-</div>
-</form>
-</div>
-</body></html>
-`
